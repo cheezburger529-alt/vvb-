@@ -1,16 +1,12 @@
 import os
-import time
 import asyncio
 import discord
 from discord import app_commands
 from typing import Optional
-import os
-print("CWD:", os.getcwd())
-print("FILES:", os.listdir("."))
 
 from license_core import (
     db_init, db_create_license, db_find_license_row, db_set_revoked,
-    db_delete_license, db_add_time, db_reset_hwid, now_ts
+    db_delete_license, db_add_time, db_reset_hwid, now_ts, fmt_ts, normalize_key
 )
 
 TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
@@ -22,11 +18,6 @@ if not TOKEN:
 if GUILD_ID == 0 or LICENSE_ADMIN_ROLE_ID == 0:
     raise SystemExit("Missing GUILD_ID or LICENSE_ADMIN_ROLE_ID env var.")
 
-def fmt_ts(ts: Optional[int]) -> str:
-    if ts is None:
-        return "lifetime"
-    return f"<t:{ts}:F> (<t:{ts}:R>)"
-
 def require_admin(interaction: discord.Interaction) -> bool:
     if interaction.guild is None:
         return False
@@ -36,8 +27,8 @@ def require_admin(interaction: discord.Interaction) -> bool:
         return False
     return any(r.id == LICENSE_ADMIN_ROLE_ID for r in interaction.user.roles)
 
-def deny(interaction: discord.Interaction):
-    return interaction.response.send_message(
+async def deny(interaction: discord.Interaction):
+    return await interaction.response.send_message(
         "❌ Not allowed. (Admin role required, and command must be used in the server.)",
         ephemeral=True
     )
@@ -91,8 +82,6 @@ async def lic_gen(interaction: discord.Interaction, duration: app_commands.Choic
             "✅ **License generated**",
             f"Key: `{key}`",
             f"Expires: {fmt_ts(exp)}",
-            "",
-            "⚠️ Server stores only a hash."
         ]),
         ephemeral=True
     )
@@ -103,7 +92,8 @@ async def lic_info(interaction: discord.Interaction, license_key: str):
     if not require_admin(interaction):
         return await deny(interaction)
 
-    row = await db_find_license_row(license_key.strip().upper())
+    license_key = normalize_key(license_key)
+    row = await db_find_license_row(license_key)
     if not row:
         return await interaction.response.send_message("Not found.", ephemeral=True)
 
@@ -111,10 +101,9 @@ async def lic_info(interaction: discord.Interaction, license_key: str):
 
     await interaction.response.send_message(
         "\n".join([
-            f"🔎 **License info** `{license_key.strip().upper()}`",
+            f"🔎 **License info** `{license_key}`",
             f"ID: `{lic_id}`",
-            f"Created: {fmt_ts(int(created_at))}",
-            f"Created by: `<@{created_by}>` (`{created_by}`)",
+            f"Created by: `<@{created_by}>`",
             f"Expires: {fmt_ts(expires_at)}",
             f"Revoked: `{bool(revoked)}`",
             f"HWID bound: `{hwid_hash is not None}`",
@@ -128,7 +117,7 @@ async def lic_info(interaction: discord.Interaction, license_key: str):
 async def lic_revoke(interaction: discord.Interaction, license_key: str):
     if not require_admin(interaction):
         return await deny(interaction)
-    ok = await db_set_revoked(license_key.strip().upper(), True)
+    ok = await db_set_revoked(normalize_key(license_key), True)
     await interaction.response.send_message("✅ Revoked." if ok else "Not found.", ephemeral=True)
 
 @bot.tree.command(name="lic_unrevoke", description="(Admin) Unrevoke a license")
@@ -136,7 +125,7 @@ async def lic_revoke(interaction: discord.Interaction, license_key: str):
 async def lic_unrevoke(interaction: discord.Interaction, license_key: str):
     if not require_admin(interaction):
         return await deny(interaction)
-    ok = await db_set_revoked(license_key.strip().upper(), False)
+    ok = await db_set_revoked(normalize_key(license_key), False)
     await interaction.response.send_message("✅ Unrevoked." if ok else "Not found.", ephemeral=True)
 
 @bot.tree.command(name="lic_delete", description="(Admin) DELETE a license (permanent)")
@@ -144,7 +133,7 @@ async def lic_unrevoke(interaction: discord.Interaction, license_key: str):
 async def lic_delete(interaction: discord.Interaction, license_key: str):
     if not require_admin(interaction):
         return await deny(interaction)
-    ok = await db_delete_license(license_key.strip().upper())
+    ok = await db_delete_license(normalize_key(license_key))
     await interaction.response.send_message("✅ Deleted." if ok else "Not found.", ephemeral=True)
 
 @bot.tree.command(name="lic_addtime", description="(Admin) Add time to a license")
@@ -155,11 +144,11 @@ async def lic_addtime(interaction: discord.Interaction, license_key: str, days: 
     if days <= 0 or days > 3650:
         return await interaction.response.send_message("Invalid days.", ephemeral=True)
 
-    ok, info = await db_add_time(license_key.strip().upper(), days * 24 * 3600)
+    ok, info = await db_add_time(normalize_key(license_key), days * 24 * 3600)
     if not ok:
         return await interaction.response.send_message("Not found.", ephemeral=True)
     if info == "lifetime_noop":
-        return await interaction.response.send_message("License is lifetime; addtime is a no-op.", ephemeral=True)
+        return await interaction.response.send_message("Lifetime; addtime is a no-op.", ephemeral=True)
 
     await interaction.response.send_message(f"✅ Added time. New expires_at: {fmt_ts(int(info))}", ephemeral=True)
 
@@ -168,12 +157,11 @@ async def lic_addtime(interaction: discord.Interaction, license_key: str, days: 
 async def lic_reset_hwid(interaction: discord.Interaction, license_key: str):
     if not require_admin(interaction):
         return await deny(interaction)
-    ok = await db_reset_hwid(license_key.strip().upper())
+    ok = await db_reset_hwid(normalize_key(license_key))
     await interaction.response.send_message("✅ HWID reset." if ok else "Not found.", ephemeral=True)
 
-async def main():
+async def start_bot():
     await bot.start(TOKEN)
 
 if __name__ == "__main__":
-
-    asyncio.run(main())
+    asyncio.run(start_bot())
