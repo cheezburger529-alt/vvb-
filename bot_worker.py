@@ -4,6 +4,9 @@ import asyncio
 import discord
 from discord import app_commands
 from typing import Optional
+import os
+print("CWD:", os.getcwd())
+print("FILES:", os.listdir("."))
 
 from license_core import (
     db_init, db_create_license, db_find_license_row, db_set_revoked,
@@ -172,4 +175,5 @@ async def main():
     await bot.start(TOKEN)
 
 if __name__ == "__main__":
+
     asyncio.run(main())
